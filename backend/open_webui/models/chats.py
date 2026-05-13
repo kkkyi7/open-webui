@@ -332,15 +332,46 @@ class ChatTable:
 
             return ChatModel.model_validate(chat_item) if chat_item else None
 
+    def _normalize_import_meta(self, meta: Optional[dict]) -> dict:
+        if not isinstance(meta, dict):
+            meta = {}
+
+        import_meta = meta.get('import', {}) if isinstance(meta.get('import'), dict) else {}
+        source = meta.get('source') or import_meta.get('source')
+        tags = meta.get('tags', [])
+        tags = tags if isinstance(tags, list) else []
+
+        normalized_tags = []
+        for tag in tags:
+            if tag is None:
+                continue
+            tag_id = str(tag).replace(' ', '_').lower()
+            if tag_id and tag_id not in normalized_tags:
+                normalized_tags.append(tag_id)
+
+        if source:
+            source = str(source).replace(' ', '_').lower()
+            for tag_id in ['imported', f'source_{source}']:
+                if tag_id not in normalized_tags:
+                    normalized_tags.append(tag_id)
+
+        return {
+            **meta,
+            **({'import': {**import_meta, 'source': source}} if source else {}),
+            **({'source': source} if source else {}),
+            'tags': normalized_tags,
+        }
+
     def _chat_import_form_to_chat_model(self, user_id: str, form_data: ChatImportForm) -> ChatModel:
         id = str(uuid.uuid4())
+        meta = self._normalize_import_meta(form_data.meta)
         chat = ChatModel(
             **{
                 'id': id,
                 'user_id': user_id,
                 'title': self._clean_null_bytes(form_data.chat['title'] if 'title' in form_data.chat else 'New Chat'),
                 'chat': self._clean_null_bytes(form_data.chat),
-                'meta': form_data.meta,
+                'meta': meta,
                 'pinned': form_data.pinned,
                 'folder_id': form_data.folder_id,
                 'created_at': (form_data.created_at if form_data.created_at else int(time.time())),
@@ -364,6 +395,16 @@ class ChatTable:
 
             db.add_all(chats)
             await db.commit()
+
+            import_tag_names = sorted(
+                {
+                    tag
+                    for chat in chats
+                    for tag in ((chat.meta or {}).get('tags', []) if isinstance(chat.meta, dict) else [])
+                    if isinstance(tag, str) and tag
+                }
+            )
+            await Tags.ensure_tags_exist(import_tag_names, user_id, db=db)
 
             # Dual-write messages to chat_message table
             for form_data, chat_obj in zip(chat_import_forms, chats):

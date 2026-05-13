@@ -684,7 +684,7 @@ export const getImportOrigin = (_chats) => {
 	// ChatGPT exports may include folder/project metadata entries without 'mapping',
 	// so we check if ANY item has a 'mapping' key instead of only the first one.
 	if (_chats.some((chat) => 'mapping' in chat)) {
-		return 'openai';
+		return 'chatgpt';
 	}
 	return 'webui';
 };
@@ -853,6 +853,16 @@ export const convertOpenAIChats = (_chats) => {
 				user_id: '',
 				title: convo['title'],
 				chat: chat,
+				meta: {
+					source: 'chatgpt',
+					import: {
+						source: 'chatgpt',
+						external_id: convo['id'] ?? null,
+						original_title: convo['title'] ?? null,
+						imported_at: Math.floor(Date.now() / 1000)
+					},
+					tags: ['imported', 'source_chatgpt']
+				},
 				created_at: createdAt,
 				updated_at: updatedAt
 			});

@@ -138,6 +138,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv-backend/
 env/
 venv/
 ENV/
@@ -310,3 +311,7 @@ dist
 cypress/videos
 cypress/screenshots
 .vscode/settings.json
+
+# KIzty local dev launcher logs
+backend-server*.log
+dev-server*.log

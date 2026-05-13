@@ -686,7 +686,25 @@ export const getImportOrigin = (_chats) => {
 	if (_chats.some((chat) => 'mapping' in chat)) {
 		return 'chatgpt';
 	}
+
+	if (_chats.some((chat) => Array.isArray(chat?.chat_messages))) {
+		return 'claude';
+	}
+
 	return 'webui';
+};
+
+const parseImportTimestamp = (timestamp) => {
+	if (typeof timestamp === 'number') {
+		return timestamp > 9999999999 ? Math.floor(timestamp / 1000) : Math.floor(timestamp);
+	}
+
+	if (typeof timestamp === 'string' && timestamp.trim()) {
+		const parsed = Date.parse(timestamp);
+		return Number.isNaN(parsed) ? undefined : Math.floor(parsed / 1000);
+	}
+
+	return undefined;
 };
 
 export const getUserPosition = async (raw = false) => {
@@ -874,6 +892,140 @@ export const convertOpenAIChats = (_chats) => {
 	if (skipped > 0) {
 		console.log(skipped, 'Non-conversation entries (folders/projects) were skipped');
 	}
+	return chats;
+};
+
+const extractClaudeMessageContent = (message): string => {
+	if (typeof message?.text === 'string') {
+		return message.text;
+	}
+
+	if (typeof message?.content === 'string') {
+		return message.content;
+	}
+
+	if (Array.isArray(message?.content)) {
+		return message.content
+			.map((part) => {
+				if (typeof part === 'string') {
+					return part;
+				}
+
+				if (typeof part?.text === 'string') {
+					return part.text;
+				}
+
+				if (typeof part?.content === 'string') {
+					return part.content;
+				}
+
+				return '';
+			})
+			.filter(Boolean)
+			.join('\n');
+	}
+
+	return '';
+};
+
+const convertClaudeMessages = (convo) => {
+	const sourceMessages = Array.isArray(convo?.chat_messages) ? convo.chat_messages : [];
+	const messages = [];
+	const conversationId = convo?.uuid ?? convo?.id ?? crypto.randomUUID();
+	let currentId = '';
+	let lastId = null;
+
+	for (const [idx, message] of sourceMessages.entries()) {
+		const content = extractClaudeMessageContent(message);
+		const sender = message?.sender ?? message?.role ?? '';
+		const role = sender === 'human' || sender === 'user' ? 'user' : 'assistant';
+
+		if (!content.trim()) {
+			continue;
+		}
+
+		const messageId = message?.uuid ?? message?.id ?? `${conversationId}-${idx}`;
+		const timestamp = parseImportTimestamp(
+			message?.created_at ?? message?.createdAt ?? message?.timestamp
+		);
+
+		const newChat = {
+			id: messageId,
+			parentId: lastId,
+			childrenIds: [],
+			role,
+			content,
+			model: role === 'assistant' ? 'claude-import' : undefined,
+			done: true,
+			context: null,
+			...(timestamp !== undefined && { timestamp })
+		};
+
+		if (lastId) {
+			messages[messages.length - 1].childrenIds = [messageId];
+		}
+
+		messages.push(newChat);
+		currentId = messageId;
+		lastId = messageId;
+	}
+
+	const history: Record<PropertyKey, (typeof messages)[number]> = {};
+	messages.forEach((obj) => (history[obj.id] = obj));
+
+	return {
+		history: {
+			currentId,
+			messages: history
+		},
+		models: ['claude-import'],
+		messages,
+		options: {},
+		timestamp: parseImportTimestamp(convo?.created_at ?? convo?.createdAt),
+		title: convo?.name ?? convo?.title ?? 'Imported Claude Chat'
+	};
+};
+
+export const convertClaudeChats = (_chats) => {
+	const chats = [];
+	let failed = 0;
+
+	for (const convo of _chats) {
+		if (!Array.isArray(convo?.chat_messages)) {
+			continue;
+		}
+
+		const chat = convertClaudeMessages(convo);
+
+		if (validateChat(chat)) {
+			const createdAt = parseImportTimestamp(convo?.created_at ?? convo?.createdAt) ?? null;
+			const updatedAt =
+				parseImportTimestamp(convo?.updated_at ?? convo?.updatedAt) ?? createdAt ?? null;
+
+			chats.push({
+				id: convo?.uuid ?? convo?.id,
+				user_id: '',
+				title: convo?.name ?? convo?.title,
+				chat,
+				meta: {
+					source: 'claude',
+					import: {
+						source: 'claude',
+						external_id: convo?.uuid ?? convo?.id ?? null,
+						original_title: convo?.name ?? convo?.title ?? null,
+						imported_at: Math.floor(Date.now() / 1000)
+					},
+					tags: ['imported', 'source_claude']
+				},
+				created_at: createdAt,
+				updated_at: updatedAt
+			});
+		} else {
+			failed++;
+		}
+	}
+
+	console.log(failed, 'Claude conversations could not be imported');
 	return chats;
 };
 

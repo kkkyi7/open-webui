@@ -20,7 +20,7 @@
 		getPinnedChatList,
 		importChats
 	} from '$lib/apis/chats';
-	import { getImportOrigin, convertOpenAIChats } from '$lib/utils';
+	import { getImportOrigin, convertClaudeChats, convertOpenAIChats } from '$lib/utils';
 	import { onMount, getContext } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
@@ -56,6 +56,12 @@
 					chats = convertOpenAIChats(chats);
 				} catch (error) {
 					console.log('Unable to import chats:', error);
+				}
+			} else if (getImportOrigin(chats) == 'claude') {
+				try {
+					chats = convertClaudeChats(chats);
+				} catch (error) {
+					console.log('Unable to import Claude chats:', error);
 				}
 			}
 			importChatsHandler(chats);

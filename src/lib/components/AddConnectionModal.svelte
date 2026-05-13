@@ -10,7 +10,6 @@
 	import Modal from '$lib/components/common/Modal.svelte';
 	import Plus from '$lib/components/icons/Plus.svelte';
 	import Minus from '$lib/components/icons/Minus.svelte';
-	import PencilSolid from '$lib/components/icons/PencilSolid.svelte';
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
@@ -20,8 +19,32 @@
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import Textarea from './common/Textarea.svelte';
 
-	export let onSubmit: Function = () => {};
-	export let onDelete: Function = () => {};
+	type ConnectionTag = {
+		name: string;
+	};
+
+	type ConnectionConfig = {
+		enable?: boolean;
+		tags?: ConnectionTag[];
+		prefix_id?: string;
+		model_ids?: string[];
+		connection_type?: string;
+		auth_type?: string;
+		headers?: Record<string, unknown>;
+		provider?: string;
+		azure?: boolean;
+		api_version?: string;
+		api_type?: string;
+	};
+
+	type Connection = {
+		url: string;
+		key: string;
+		config: ConnectionConfig;
+	};
+
+	export let onSubmit: (connection: Connection) => void | Promise<void> = () => {};
+	export let onDelete: () => void | Promise<void> = () => {};
 
 	export let show = false;
 	export let edit = false;
@@ -29,7 +52,7 @@
 	export let ollama = false;
 	export let direct = false;
 
-	export let connection = null;
+	export let connection: Connection | null = null;
 
 	let url = '';
 	let key = '';
@@ -43,6 +66,70 @@
 			!direct &&
 			provider === '');
 
+	type ProviderPreset = {
+		provider: string;
+		url: string;
+		prefixId?: string;
+		tags?: string[];
+		authType?: string;
+		connectionType?: string;
+		apiType?: string;
+	};
+
+	const providerPresets: ProviderPreset[] = [
+		{
+			provider: 'deepseek',
+			url: 'https://api.deepseek.com',
+			prefixId: 'deepseek',
+			tags: ['domestic-llm', 'deepseek']
+		},
+		{
+			provider: 'dashscope-cn',
+			url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+			prefixId: 'qwen',
+			tags: ['domestic-llm', 'qwen', 'dashscope']
+		},
+		{
+			provider: 'dashscope-intl',
+			url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+			prefixId: 'qwen-intl',
+			tags: ['domestic-llm', 'qwen', 'dashscope']
+		},
+		{
+			provider: 'moonshot',
+			url: 'https://api.moonshot.ai/v1',
+			prefixId: 'kimi',
+			tags: ['domestic-llm', 'kimi', 'moonshot']
+		},
+		{
+			provider: 'zhipu',
+			url: 'https://open.bigmodel.cn/api/paas/v4',
+			prefixId: 'glm',
+			tags: ['domestic-llm', 'glm', 'zhipu']
+		},
+		{
+			provider: 'minimax',
+			url: 'https://api.minimax.io/v1',
+			prefixId: 'minimax',
+			tags: ['domestic-llm', 'minimax']
+		},
+		{
+			provider: 'litellm',
+			url: 'http://localhost:4000/v1',
+			prefixId: 'gateway',
+			tags: ['gateway', 'litellm'],
+			connectionType: 'local'
+		},
+		{
+			provider: 'llama.cpp',
+			url: 'http://localhost:8080/v1',
+			prefixId: 'llamacpp',
+			tags: ['local', 'llama.cpp'],
+			authType: 'none',
+			connectionType: 'local'
+		}
+	];
+
 	let prefixId = '';
 	let enable = true;
 	let apiVersion = '';
@@ -50,13 +137,37 @@
 
 	let headers = '';
 
-	let tags = [];
+	let tags: ConnectionTag[] = [];
 
 	let modelId = '';
-	let modelIds = [];
+	let modelIds: string[] = [];
 
 	let loading = false;
 	let showDeleteConfirmDialog = false;
+
+	const applyProviderPreset = (provider: string) => {
+		const preset = providerPresets.find((preset) => preset.provider === provider);
+
+		if (!preset) {
+			return;
+		}
+
+		url = preset.url;
+		prefixId = preset.prefixId ?? prefixId;
+		auth_type = preset.authType ?? auth_type;
+		connectionType = preset.connectionType ?? connectionType;
+		apiType = preset.apiType ?? apiType;
+
+		const existingTagNames = new Set(tags.map((tag) => tag.name));
+		tags = [
+			...tags,
+			...(preset.tags ?? [])
+				.filter((tag) => !existingTagNames.has(tag))
+				.map((tag) => ({
+					name: tag
+				}))
+		];
+	};
 
 	const verifyOllamaHandler = async () => {
 		// remove trailing slash from url
@@ -88,7 +199,7 @@
 					throw new Error('Headers must be a valid JSON object');
 				}
 				headers = JSON.stringify(_headers, null, 2);
-			} catch (error) {
+			} catch {
 				toast.error($i18n.t('Headers must be a valid JSON object'));
 				return;
 			}
@@ -169,7 +280,7 @@
 					throw new Error('Headers must be a valid JSON object');
 				}
 				headers = JSON.stringify(_headers, null, 2);
-			} catch (error) {
+			} catch {
 				toast.error($i18n.t('Headers must be a valid JSON object'));
 				return;
 			}
@@ -321,13 +432,22 @@
 
 									{#if !ollama}
 										<datalist id="suggestions">
-											<option value="https://api.openai.com/v1" />
-											<option value="https://api.anthropic.com/v1" />
-											<option value="https://generativelanguage.googleapis.com/v1beta/openai" />
-											<option value="https://api.mistral.ai/v1" />
-											<option value="https://api.groq.com/openai/v1" />
-											<option value="https://openrouter.ai/api/v1" />
-											<option value="https://api.x.ai/v1" />
+											<option value="https://api.openai.com/v1"></option>
+											<option value="https://api.anthropic.com/v1"></option>
+											<option value="https://generativelanguage.googleapis.com/v1beta/openai"
+											></option>
+											<option value="https://api.mistral.ai/v1"></option>
+											<option value="https://api.groq.com/openai/v1"></option>
+											<option value="https://openrouter.ai/api/v1"></option>
+											<option value="https://api.x.ai/v1"></option>
+											<option value="https://api.deepseek.com"></option>
+											<option value="https://dashscope.aliyuncs.com/compatible-mode/v1"></option>
+											<option value="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+											></option>
+											<option value="https://api.moonshot.ai/v1"></option>
+											<option value="https://open.bigmodel.cn/api/paas/v4"></option>
+											<option value="https://api.minimax.io/v1"></option>
+											<option value="http://localhost:4000/v1"></option>
 										</datalist>
 									{/if}
 								</div>
@@ -505,9 +625,19 @@
 									<select
 										id="provider-select"
 										bind:value={provider}
+										on:change={() => {
+											applyProviderPreset(provider);
+										}}
 										class="text-xs text-gray-700 dark:text-gray-300 bg-transparent outline-hidden"
 									>
 										<option value="">{$i18n.t('Default')}</option>
+										<option value="deepseek">DeepSeek</option>
+										<option value="dashscope-cn">Qwen / DashScope CN</option>
+										<option value="dashscope-intl">Qwen / DashScope Intl</option>
+										<option value="moonshot">Kimi / Moonshot</option>
+										<option value="zhipu">GLM / Zhipu</option>
+										<option value="minimax">MiniMax</option>
+										<option value="litellm">LiteLLM Gateway</option>
 										<option value="azure">{$i18n.t('Azure OpenAI')}</option>
 										<option value="llama.cpp">{$i18n.t('llama.cpp')}</option>
 									</select>
